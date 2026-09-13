@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>UMKM Field Tracker — Region 2 Semarang</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ TOP BAR ============ -->
+<header class="topbar">
+  <div class="topbar__left">
+    <span class="topbar__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9a1 1 0 0 0 1 1H9a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1h2.5a1 1 0 0 0 1-1v-9"/></svg>
+    </span>
+    <div class="topbar__title-wrap">
+      <span class="topbar__title">UMKM Field Tracker</span>
+      <span class="topbar__subtitle">Region 2 &middot; Semarang</span>
+    </div>
+  </div>
+  <button class="report-switcher" id="reportSwitcherBtn" type="button">
+    <span class="report-switcher__label" id="reportSwitcherLabel">Laporan</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m6 9 6 6 6-6"/></svg>
+  </button>
+</header>
+
+<div class="app-shell">
+
+  <!-- ============ SIDEBAR (desktop) ============ -->
+  <nav class="sidebar" id="sidebar" aria-label="Navigasi utama">
+    <button class="sidebar__item is-active" data-view="home" type="button">
+      <span class="sidebar__icon" data-icon="home"></span><span>Home</span>
+    </button>
+    <button class="sidebar__item" data-view="list" type="button">
+      <span class="sidebar__icon" data-icon="store"></span><span>UMKM</span>
+    </button>
+    <button class="sidebar__item" data-view="field" type="button">
+      <span class="sidebar__icon" data-icon="field"></span><span>Field Mode</span>
+    </button>
+    <button class="sidebar__item" data-view="progress" type="button">
+      <span class="sidebar__icon" data-icon="progress"></span><span>Progress</span>
+    </button>
+    <button class="sidebar__item" data-view="settings" type="button">
+      <span class="sidebar__icon" data-icon="settings"></span><span>Settings</span>
+    </button>
+    <div class="sidebar__footer">
+      <div class="sidebar__mini-progress">
+        <div class="mini-ring" id="sidebarRing">
+          <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" class="mini-ring__track"></circle><circle cx="20" cy="20" r="17" class="mini-ring__fill" id="sidebarRingFill"></circle></svg>
+          <span id="sidebarRingPct">0%</span>
+        </div>
+        <div class="sidebar__mini-progress-text">
+          <strong id="sidebarDoneCount">0/50</strong>
+          <span>selesai</span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============ MAIN CONTENT ============ -->
+  <main class="main-content">
+
+    <!-- ---------- HOME ---------- -->
+    <section class="view" id="view-home" data-view="home">
+      <div class="stat-strip" id="statStrip"><!-- injected --></div>
+
+      <div class="section-block section-block--hero">
+        <div class="section-block__head">
+          <h2 class="section-heading">Kunjungan berikutnya</h2>
+        </div>
+        <div id="nextVisitCard" class="next-card"><!-- injected --></div>
+      </div>
+
+      <div class="home-grid">
+        <div class="section-block">
+          <div class="section-block__head">
+            <h2 class="section-heading">Aktivitas hari ini</h2>
+          </div>
+          <div id="todayActivity" class="today-activity"><!-- injected --></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-block__head">
+            <h2 class="section-heading">Kunjungan terakhir</h2>
+            <button class="link-btn" data-view="progress" type="button">Lihat semua</button>
+          </div>
+          <div id="recentList" class="recent-list"><!-- injected --></div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <div class="section-block__head">
+          <h2 class="section-heading">Progres dokumentasi</h2>
+        </div>
+        <div id="docSummary" class="doc-summary"><!-- injected --></div>
+      </div>
+    </section>
+
+    <!-- ---------- UMKM LIST ---------- -->
+    <section class="view" id="view-list" data-view="list" hidden>
+      <div class="list-toolbar">
+        <div class="search-box">
+          <span class="search-box__icon" data-icon="search"></span>
+          <input type="text" id="searchInput" placeholder="Cari nama, nomor, atau telepon...">
+        </div>
+        <div class="filter-chips" id="filterChips">
+          <button class="chip is-active" data-filter="semua" type="button">Semua</button>
+          <button class="chip" data-filter="belum" type="button">Belum</button>
+          <button class="chip" data-filter="proses" type="button">Proses</button>
+          <button class="chip" data-filter="selesai" type="button">Selesai</button>
+        </div>
+        <button class="sort-btn" id="sortBtn" type="button" aria-label="Urutkan">
+          <span data-icon="sort"></span>
+        </button>
+      </div>
+
+      <div class="list-head-row" aria-hidden="true">
+        <span class="list-head-row__no">#</span>
+        <span class="list-head-row__name">Nama UMKM</span>
+        <span class="list-head-row__status">Status</span>
+        <span class="list-head-row__chev"></span>
+      </div>
+
+      <div class="umkm-rows" id="umkmRows"><!-- injected --></div>
+      <p class="empty-state" id="listEmptyState" hidden>UMKM tidak ditemukan.</p>
+    </section>
+
+    <!-- ---------- FIELD MODE ---------- -->
+    <section class="view" id="view-field" data-view="field" hidden>
+      <div class="field-topline">
+        <div class="field-topline__nav">
+          <button class="icon-btn" id="fieldPrevBtn" type="button" aria-label="Sebelumnya" data-icon="chevLeft"></button>
+          <span class="field-topline__count" id="fieldVisitCount">Kunjungan — / 50</span>
+          <button class="icon-btn" id="fieldNextBtn" type="button" aria-label="Berikutnya" data-icon="chevRight"></button>
+        </div>
+        <button class="link-btn" id="fieldJumpBtn" type="button">Lompat ke berikutnya</button>
+      </div>
+      <div id="fieldContent" class="field-content"><!-- injected --></div>
+    </section>
+
+    <!-- ---------- PROGRESS ---------- -->
+    <section class="view" id="view-progress" data-view="progress" hidden>
+      <div class="section-block section-block--hero">
+        <div class="progress-hero">
+          <div class="progress-track progress-track--big">
+            <div class="progress-track__fill" id="bigProgressFill" style="width:0%"></div>
+          </div>
+          <div class="progress-hero__caption" id="bigProgressCaption">0 / 50 UMKM selesai &middot; 0%</div>
+        </div>
+        <div class="summary-grid" id="progressSummaryGrid"><!-- injected --></div>
+      </div>
+
+      <div class="section-block">
+        <div class="section-block__head">
+          <h2 class="section-heading">Kunjungan berikutnya</h2>
+        </div>
+        <div id="progressNextCard" class="mini-next-card"><!-- injected --></div>
+      </div>
+
+      <div class="section-block">
+        <div class="section-block__head">
+          <h2 class="section-heading">Riwayat kunjungan selesai</h2>
+        </div>
+        <div id="historyList" class="history-list"><!-- injected --></div>
+      </div>
+    </section>
+
+    <!-- ---------- SETTINGS ---------- -->
+    <section class="view" id="view-settings" data-view="settings" hidden>
+
+      <h2 class="section-heading section-heading--top">Laporan</h2>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <strong id="settingsActiveReportName">Laporan</strong>
+            <p>Laporan aktif saat ini. Kelola, ganti, atau buat laporan baru.</p>
+          </div>
+          <button class="btn btn--ghost" id="btnManageReports" type="button">Kelola Laporan</button>
+        </div>
+      </div>
+
+      <h2 class="section-heading">Data laporan aktif</h2>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <strong>Export laporan ini</strong>
+            <p>Simpan status, catatan, dan waktu kunjungan laporan aktif ke file JSON.</p>
+          </div>
+          <button class="btn btn--ghost" id="btnExportCurrent" type="button">Export Laporan Ini</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <strong>Export semua laporan</strong>
+            <p>Simpan seluruh laporan (semua UMKM &amp; progres) dalam satu file JSON.</p>
+          </div>
+          <button class="btn btn--ghost" id="btnExportAll" type="button">Export Semua</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <strong>Import progress</strong>
+            <p>Muat kembali file JSON yang pernah diexport ke dalam laporan aktif.</p>
+          </div>
+          <label class="btn btn--ghost" for="importFile">Import Progress</label>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+        <div class="settings-row">
+          <div>
+            <strong>Unduh semua dokumentasi</strong>
+            <p>Mengunduh setiap foto &amp; video pada laporan aktif satu per satu ke perangkat ini.</p>
+          </div>
+          <button class="btn btn--ghost" id="btnDownloadAllMedia" type="button">Unduh Semua Media</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <strong>Reset laporan ini</strong>
+            <p>Menghapus seluruh status, catatan, dan dokumentasi foto/video pada laporan aktif saja. Laporan lain tidak terpengaruh.</p>
+          </div>
+          <button class="btn btn--danger" id="btnReset" type="button">Reset Laporan Ini</button>
+        </div>
+      </div>
+
+      <h2 class="section-heading">Tentang</h2>
+      <div class="settings-card settings-card--info">
+        <p>UMKM Field Tracker — Region 2, Semarang. Aplikasi berjalan sepenuhnya di perangkat ini (offline). Status dan catatan tersimpan di localStorage, dokumentasi foto/video tersimpan di IndexedDB browser ini per laporan. Tidak ada data yang dikirim ke server manapun.</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ BOTTOM NAV (mobile) ============ -->
+<nav class="bottom-nav" id="bottomNav" aria-label="Navigasi utama">
+  <button class="bottom-nav__item is-active" data-view="home" type="button">
+    <span class="bottom-nav__icon" data-icon="home"></span><span>Home</span>
+  </button>
+  <button class="bottom-nav__item" data-view="list" type="button">
+    <span class="bottom-nav__icon" data-icon="store"></span><span>UMKM</span>
+  </button>
+  <button class="bottom-nav__item bottom-nav__item--field" data-view="field" type="button">
+    <span class="bottom-nav__icon bottom-nav__icon--field" data-icon="field"></span><span>Field</span>
+  </button>
+  <button class="bottom-nav__item" data-view="progress" type="button">
+    <span class="bottom-nav__icon" data-icon="progress"></span><span>Progress</span>
+  </button>
+  <button class="bottom-nav__item" data-view="settings" type="button">
+    <span class="bottom-nav__icon" data-icon="settings"></span><span>Settings</span>
+  </button>
+</nav>
+
+<!-- ============ DETAIL MODAL (opened from UMKM list) ============ -->
+<div class="modal-overlay" id="detailOverlay" hidden>
+  <div class="modal" id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailName">
+    <div class="modal__handle"></div>
+    <button class="modal__close" id="detailClose" type="button" aria-label="Tutup" data-icon="close"></button>
+    <div class="modal__scroll" id="detailScroll">
+      <div class="modal__top">
+        <span class="modal__visit-badge" id="detailVisitBadge">VISIT #1</span>
+        <span class="status-pill" id="detailStatusPill">BELUM</span>
+      </div>
+      <h2 class="modal__name" id="detailName">—</h2>
+      <p class="modal__umkm-no" id="detailUmkmNo">UMKM #—</p>
+      <p class="modal__same-loc" id="detailSameLoc" hidden><span data-icon="pin"></span> Satu lokasi dengan <span id="detailSameLocNames"></span></p>
+
+      <div class="modal__meta">
+        <div class="modal__meta-item">
+          <span class="modal__meta-label">Telepon</span>
+          <span class="modal__meta-value" id="detailPhone">—</span>
+        </div>
+        <div class="modal__meta-item">
+          <span class="modal__meta-label">Jarak</span>
+          <span class="modal__meta-value" id="detailDistance">—</span>
+        </div>
+        <div class="modal__meta-item" id="detailNoteWrap" hidden>
+          <span class="modal__meta-label">Catatan lokasi</span>
+          <span class="modal__meta-value" id="detailLocNote">—</span>
+        </div>
+        <div class="modal__meta-item">
+          <span class="modal__meta-label">Waktu kunjungan</span>
+          <span class="modal__meta-value" id="detailVisitTime">Belum dikunjungi</span>
+        </div>
+      </div>
+
+      <div class="modal__actions">
+        <a class="btn btn--action" id="detailMapsBtn" href="#" target="_blank" rel="noopener"><span data-icon="pin"></span> Maps</a>
+        <a class="btn btn--action" id="detailCallBtn" href="#"><span data-icon="phone"></span> Telepon</a>
+      </div>
+
+      <div id="detailWorkflow" class="visit-workflow"><!-- mounted by JS: doc grid, notes, complete --></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ REPORT MANAGER MODAL ============ -->
+<div class="modal-overlay" id="reportsOverlay" hidden>
+  <div class="modal modal--compact" id="reportsModal" role="dialog" aria-modal="true" aria-labelledby="reportsModalTitle">
+    <div class="modal__handle"></div>
+    <button class="modal__close" id="reportsClose" type="button" aria-label="Tutup" data-icon="close"></button>
+    <div class="modal__scroll">
+      <h2 class="modal__name" id="reportsModalTitle">Kelola Laporan</h2>
+      <p class="modal__hint">Setiap laporan punya progres, catatan, dan dokumentasi sendiri.</p>
+      <div id="reportsList" class="reports-list"><!-- injected --></div>
+      <div class="reports-create">
+        <input type="text" id="newReportInput" class="reports-create__input" placeholder="Nama laporan baru, contoh: Laporan UMKM Oktober 2026" maxlength="80">
+        <button class="btn btn--primary btn--block" id="btnCreateReport" type="button">+ Buat Laporan Baru</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ GENERIC CONFIRM DIALOG ============ -->
+<div class="modal-overlay modal-overlay--confirm" id="confirmOverlay" hidden>
+  <div class="confirm-box">
+    <h3 id="confirmTitle">Konfirmasi</h3>
+    <p id="confirmBody"></p>
+    <div class="confirm-box__actions">
+      <button class="btn btn--ghost" id="confirmCancel" type="button">Batal</button>
+      <button class="btn btn--primary" id="confirmOk" type="button">Ya</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TOAST ============ -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ============ LIGHTBOX ============ -->
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox__close" id="lightboxClose" type="button" aria-label="Tutup" data-icon="close"></button>
+  <div class="lightbox__body" id="lightboxBody"></div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
