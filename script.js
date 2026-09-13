@@ -831,7 +831,9 @@
       input.type = "file";
       input.className = "file-input-hidden";
       input.accept = slot.kind === "photo" ? "image/*" : "video/*";
-      input.capture = "environment";
+      // Sengaja TIDAK diberi atribut "capture" — supaya browser HP menampilkan
+      // pilihan (Kamera, Galeri/Album, aplikasi Files, dll), bukan langsung
+      // membuka kamera.
       input.addEventListener("change", (ev) => {
         const file = ev.target.files && ev.target.files[0];
         if (file) handleSaveMedia(slot, file);
