@@ -99,6 +99,8 @@
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3m3 3-3 3"/><path d="M20 16H7l3 3m-3-3 3-3"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2 2 0 0 0 0-2.8l-1.2-1.2a2 2 0 0 0-2.8 0L4 15v5Z"/><path d="m13.5 6.5 4 4"/></svg>',
+    gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m3 16 5-4.5 3.5 3 4-3.8L21 15"/><circle cx="8.2" cy="8.5" r="1.4"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5a1 1 0 0 1 1-1h4.4l1.6 2h9a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1V6.5Z"/></svg>',
   };
   function icon(name) { return ICONS[name] || ""; }
   function iconSpan(name, extraClass) {
@@ -544,6 +546,39 @@
     });
   }
 
+  // Menampilkan bottom sheet "Tambah Media" (Kamera / Album-Galeri / File) dan
+  // mengembalikan Promise yang resolve ke "camera" | "gallery" | "file" | null
+  // (null jika user menekan Batal, menutup sheet, atau klik di luar sheet).
+  function pickMediaSource(slot) {
+    return new Promise((resolve) => {
+      const overlay = $("#mediaSourceOverlay");
+      const cancelBtn = $("#mediaSourceCancel");
+      const closeBtn = $("#mediaSourceClose");
+      const optButtons = $all(".media-source-opt", overlay);
+      const isVideo = slot && slot.kind === "video";
+      $("#mediaSourceTitle").textContent = isVideo ? "Tambah Video" : "Tambah Foto";
+      $("#mediaSourceHint").textContent = "Pilih sumber " + (isVideo ? "video" : "foto") + ".";
+      overlay.hidden = false;
+
+      function cleanup(result) {
+        overlay.hidden = true;
+        optButtons.forEach((b) => b.removeEventListener("click", onOpt));
+        cancelBtn.removeEventListener("click", onCancel);
+        closeBtn.removeEventListener("click", onCancel);
+        overlay.removeEventListener("click", onOverlayClick);
+        resolve(result);
+      }
+      function onOpt(ev) { cleanup(ev.currentTarget.dataset.source || null); }
+      function onCancel() { cleanup(null); }
+      function onOverlayClick(ev) { if (ev.target === overlay) cleanup(null); }
+
+      optButtons.forEach((b) => b.addEventListener("click", onOpt));
+      cancelBtn.addEventListener("click", onCancel);
+      closeBtn.addEventListener("click", onCancel);
+      overlay.addEventListener("click", onOverlayClick);
+    });
+  }
+
   function trackUrl(key, url) {
     if (objectUrlCache[key]) URL.revokeObjectURL(objectUrlCache[key]);
     objectUrlCache[key] = url;
@@ -826,20 +861,66 @@
       updateFinishButtons();
     }
 
-    function buildFileInput(slot) {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.className = "file-input-hidden";
-      input.accept = slot.kind === "photo" ? "image/*" : "video/*";
-      // Sengaja TIDAK diberi atribut "capture" — supaya browser HP menampilkan
-      // pilihan (Kamera, Galeri/Album, aplikasi Files, dll), bukan langsung
-      // membuka kamera.
-      input.addEventListener("change", (ev) => {
-        const file = ev.target.files && ev.target.files[0];
-        if (file) handleSaveMedia(slot, file);
-        input.value = "";
-      });
-      return input;
+    const MAX_MEDIA_BYTES = 300 * 1024 * 1024; // batas aman ukuran file (penyimpanan IndexedDB di HP bisa gagal untuk file sangat besar)
+
+    function validateMediaFile(slot, file) {
+      const expectedPrefix = slot.kind === "photo" ? "image/" : "video/";
+      if (file.type && !file.type.startsWith(expectedPrefix)) {
+        showToast("Format file tidak didukung untuk " + (slot.kind === "photo" ? "foto" : "video") + " ini.", true);
+        return false;
+      }
+      if (file.size > MAX_MEDIA_BYTES) {
+        showToast("Ukuran file terlalu besar (maks " + Math.round(MAX_MEDIA_BYTES / (1024 * 1024)) + " MB).", true);
+        return false;
+      }
+      return true;
+    }
+
+    function handleMediaPicked(slot, file) {
+      if (!file) return; // user membatalkan picker: tidak melakukan apa-apa
+      if (!validateMediaFile(slot, file)) return;
+      handleSaveMedia(slot, file);
+    }
+
+    // Membuat 3 input file tersembunyi (Kamera / Album-Galeri / File) untuk satu
+    // slot dokumentasi, lalu mengembalikan fungsi open() yang menampilkan bottom
+    // sheet pemilih sumber media terlebih dahulu — bukan langsung membuka kamera.
+    function setupMediaPicker(container, slot) {
+      const mime = slot.kind === "photo" ? "image/*" : "video/*";
+
+      function makeInput(withCapture) {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.className = "file-input-hidden";
+        input.accept = mime;
+        if (withCapture) {
+          // Kamera: paksa buka kamera HP langsung (foto atau video sesuai slot).
+          input.capture = "environment";
+        }
+        // Untuk galeri & file: Sengaja TIDAK diberi atribut "capture" — supaya
+        // browser HP membuka galeri/photo picker atau file picker, bukan kamera.
+        input.addEventListener("change", (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          input.value = "";
+          handleMediaPicked(slot, file);
+        });
+        container.appendChild(input);
+        return input;
+      }
+
+      const cameraInput = makeInput(true);
+      const galleryInput = makeInput(false);
+      const fileInput = makeInput(false);
+
+      return {
+        async open() {
+          const source = await pickMediaSource(slot);
+          if (source === "camera") cameraInput.click();
+          else if (source === "gallery") galleryInput.click();
+          else if (source === "file") fileInput.click();
+          // source === null => user menekan Batal / menutup sheet: tidak melakukan apa-apa.
+        },
+      };
     }
 
     async function handleSaveMedia(slot, file) {
@@ -928,14 +1009,13 @@
               '<button class="btn btn--danger btn--sm" data-act="remove">' + iconSpan("trash") + ' Hapus</button>';
             body.appendChild(actions);
 
-            const hiddenInput = buildFileInput(slot);
-            body.appendChild(hiddenInput);
+            const picker = setupMediaPicker(body, slot);
 
             actions.querySelector('[data-act="dl"]').addEventListener("click", () => {
               const rep = getActiveReport();
               triggerDownload(url, filenameForSlot(rep, no, slot, record.type));
             });
-            actions.querySelector('[data-act="replace"]').addEventListener("click", () => hiddenInput.click());
+            actions.querySelector('[data-act="replace"]').addEventListener("click", () => picker.open());
             actions.querySelector('[data-act="remove"]').addEventListener("click", () => handleRemoveMedia(slot));
           } else {
             const missing = document.createElement("p");
@@ -954,12 +1034,11 @@
         const label = document.createElement("span");
         label.className = "doc-slot__empty-text";
         label.textContent = slot.kind === "photo" ? "Belum ada foto" : "Belum ada video";
-        const hiddenInput = buildFileInput(slot);
         emptyWrap.appendChild(btn);
         emptyWrap.appendChild(label);
-        emptyWrap.appendChild(hiddenInput);
         slotEl.appendChild(emptyWrap);
-        btn.addEventListener("click", () => hiddenInput.click());
+        const picker = setupMediaPicker(emptyWrap, slot);
+        btn.addEventListener("click", () => picker.open());
       }
       return slotEl;
     }

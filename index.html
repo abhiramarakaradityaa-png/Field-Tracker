@@ -311,6 +311,42 @@
   </div>
 </div>
 
+<!-- ============ MEDIA SOURCE PICKER SHEET ============ -->
+<div class="modal-overlay modal-overlay--confirm" id="mediaSourceOverlay" hidden>
+  <div class="modal modal--compact media-source-sheet" id="mediaSourceModal" role="dialog" aria-modal="true" aria-labelledby="mediaSourceTitle">
+    <div class="modal__handle"></div>
+    <button class="modal__close" id="mediaSourceClose" type="button" aria-label="Tutup" data-icon="close"></button>
+    <div class="modal__scroll">
+      <h2 class="modal__name" id="mediaSourceTitle">Tambah Media</h2>
+      <p class="modal__hint" id="mediaSourceHint">Pilih sumber media.</p>
+      <div class="media-source-list" id="mediaSourceList">
+        <button type="button" class="media-source-opt" data-source="camera">
+          <span class="media-source-opt__icon" data-icon="camera"></span>
+          <span class="media-source-opt__text">
+            <strong>Kamera</strong>
+            <span>Ambil foto atau video baru</span>
+          </span>
+        </button>
+        <button type="button" class="media-source-opt" data-source="gallery">
+          <span class="media-source-opt__icon" data-icon="gallery"></span>
+          <span class="media-source-opt__text">
+            <strong>Album / Galeri</strong>
+            <span>Pilih media yang sudah ada</span>
+          </span>
+        </button>
+        <button type="button" class="media-source-opt" data-source="file">
+          <span class="media-source-opt__icon" data-icon="folder"></span>
+          <span class="media-source-opt__text">
+            <strong>File</strong>
+            <span>Pilih dari penyimpanan</span>
+          </span>
+        </button>
+      </div>
+      <button type="button" class="btn btn--ghost btn--block" id="mediaSourceCancel">Batal</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ GENERIC CONFIRM DIALOG ============ -->
 <div class="modal-overlay modal-overlay--confirm" id="confirmOverlay" hidden>
   <div class="confirm-box">

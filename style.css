@@ -723,6 +723,28 @@ video.doc-slot__preview { cursor: default; }
 
 .modal--compact { max-width: 460px; }
 
+/* ==========================================================================
+   MEDIA SOURCE PICKER SHEET (Kamera / Album-Galeri / File)
+   ========================================================================== */
+.media-source-list { display: flex; flex-direction: column; gap: 8px; margin: var(--sp-4) 0; }
+.media-source-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-m);
+  padding: 12px 14px; text-align: left;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.media-source-opt:hover, .media-source-opt:focus-visible { background: var(--elevated-2); border-color: var(--border-strong); }
+.media-source-opt:active { background: var(--accent-soft-bg); border-color: var(--accent-soft-border); }
+.media-source-opt__icon {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--elevated); color: var(--accent);
+}
+.media-source-opt__icon svg { width: 19px; height: 19px; }
+.media-source-opt__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.media-source-opt__text strong { font-size: 13.5px; font-weight: 700; }
+.media-source-opt__text span { font-size: 11.5px; color: var(--text-faint); }
+
 @media (min-width: 900px) {
   .modal-overlay { align-items: center; }
   .modal { border-radius: 22px; border-bottom: 1px solid var(--border); max-height: 84vh; }
