@@ -223,9 +223,26 @@
         </div>
       </div>
 
+      <h2 class="section-heading">Google Drive</h2>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <strong>Status konfigurasi</strong>
+            <p id="driveConfigStatus">Memeriksa konfigurasi...</p>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <strong>Tes koneksi</strong>
+            <p>Setiap foto &amp; video baru otomatis dikirim ke Google Drive (folder per lokasi UMKM) lewat Apps Script. Gunakan tombol ini untuk memastikan sambungannya berjalan.</p>
+          </div>
+          <button class="btn btn--ghost" id="btnTestDrive" type="button">Tes Koneksi</button>
+        </div>
+      </div>
+
       <h2 class="section-heading">Tentang</h2>
       <div class="settings-card settings-card--info">
-        <p>UMKM Field Tracker — Region 2, Semarang. Aplikasi berjalan sepenuhnya di perangkat ini (offline). Status dan catatan tersimpan di localStorage, dokumentasi foto/video tersimpan di IndexedDB browser ini per laporan. Tidak ada data yang dikirim ke server manapun.</p>
+        <p>UMKM Field Tracker — Region 2, Semarang. Status dan catatan tersimpan di localStorage, dokumentasi foto/video tersimpan di IndexedDB browser ini per laporan — aplikasi tetap berfungsi penuh secara offline. Jika Google Drive sudah dikonfigurasi (lihat bagian "Google Drive" di atas), setiap foto/video baru juga otomatis dikirim ke Google Drive sebagai cadangan; jika tidak, seluruh data tetap tersimpan aman di perangkat ini saja.</p>
       </div>
     </section>
 

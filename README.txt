@@ -42,6 +42,19 @@ PENYIMPANAN DATA
   kali membuka versi baru ini — termasuk foto/video yang sudah tersimpan.
 - Tidak ada data yang dikirim ke internet.
 
+SINKRONISASI KE GOOGLE DRIVE (OPSIONAL)
+- Aplikasi ini bisa otomatis mengirim setiap foto/video dokumentasi baru ke
+  Google Drive (folder "UMKM FIELD TRACKER", satu subfolder per lokasi UMKM)
+  lewat backend Google Apps Script (file Code.gs yang disertakan terpisah).
+- Fitur ini OPSIONAL: selama APPS_SCRIPT_URL di bagian atas script.js belum
+  diisi, aplikasi berjalan seperti biasa (100% lokal), tidak ada yang rusak.
+- Cara mengaktifkan: ikuti panduan setup Google Apps Script yang diberikan
+  terpisah, lalu isi APPS_SCRIPT_URL di script.js dengan URL Web App Anda.
+- Status upload ke Drive untuk tiap foto/video ditampilkan langsung di bawah
+  preview file tersebut (Mengupload / Tersimpan di Drive / Gagal, dengan
+  tombol "Coba lagi"). Ada juga tombol "Tes Koneksi" di Settings > Google
+  Drive untuk memastikan sambungannya berjalan.
+
 CATATAN PENTING
 - Karena data tersimpan per-browser (bukan di cloud), gunakan HP & browser
   yang sama selama proses pendataan.

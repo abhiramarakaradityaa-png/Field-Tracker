@@ -8,6 +8,36 @@
 (function () {
   'use strict';
 
+  /* ==========================================================================
+   * MANUAL CONFIGURATION — bagian yang HARUS Anda isi sendiri
+   * ==========================================================================
+   * Hanya SATU nilai yang perlu diisi di sini: APPS_SCRIPT_URL.
+   *
+   * APPS_SCRIPT_URL
+   *   - Apa ini?      URL Web App dari backend Google Apps Script (Code.gs)
+   *                    yang menjadi perantara antara aplikasi ini dan Google
+   *                    Drive Anda.
+   *   - Dari mana?    Setelah men-deploy Apps Script sebagai "Web app", Google
+   *                    akan memberikan URL berbentuk:
+   *                    https://script.google.com/macros/s/XXXXXXXX/exec
+   *                    Copy URL tersebut lalu paste di bawah ini.
+   *   - Amankah?      YA. URL ini AMAN untuk ada di frontend/GitHub Pages.
+   *                    URL ini tidak berisi password, API key, atau credential
+   *                    rahasia apapun — hanya alamat endpoint publik yang
+   *                    dijaga oleh logika Apps Script itu sendiri (yang hanya
+   *                    mengizinkan upload ke dalam folder ROOT_FOLDER_ID).
+   *   - Belum diisi?  Selama masih bertuliskan "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
+   *                    fitur upload ke Google Drive otomatis NONAKTIF (upload
+   *                    lokal ke perangkat tetap berjalan seperti biasa, tidak
+   *                    ada fitur existing yang rusak).
+   *
+   * CATATAN: ROOT_FOLDER_ID (folder utama "UMKM FIELD TRACKER" di Google
+   * Drive) TIDAK diisi di sini — nilai itu hanya ada di backend Google Apps
+   * Script (file Code.gs), bukan di frontend. Ini sengaja, supaya struktur
+   * folder Drive Anda tidak bisa diubah/diarahkan dari sisi browser.
+   */
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx284AwAFm6kp8NFJw7wudgbFP3nrdup95l1MapMvJ8f_0bIkR07E1j5YFOLwIyF6D-IQ/exec";
+
   /* ------------------------------------------------------------------ *
    * 1. DATA 50 UMKM — urutan perjalanan (JANGAN UBAH nomor/telepon/URL)
    * ------------------------------------------------------------------ */
@@ -101,6 +131,7 @@
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2 2 0 0 0 0-2.8l-1.2-1.2a2 2 0 0 0-2.8 0L4 15v5Z"/><path d="m13.5 6.5 4 4"/></svg>',
     gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m3 16 5-4.5 3.5 3 4-3.8L21 15"/><circle cx="8.2" cy="8.5" r="1.4"/></svg>',
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5a1 1 0 0 1 1-1h4.4l1.6 2h9a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1V6.5Z"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .4-7.98A5.5 5.5 0 0 0 7.1 9.8 4 4 0 0 0 7 18Z"/></svg>',
   };
   function icon(name) { return ICONS[name] || ""; }
   function iconSpan(name, extraClass) {
@@ -121,6 +152,7 @@
   const DB_STORE = "media";
   const LEGACY_DB_NAME = "umkm_tracker_media_v1";
   const LEGACY_DB_STORE = "media";
+  const DRIVE_FOLDER_CACHE_KEY = "umkm_tracker_drive_folders_v1"; // cache folderId per nama lokasi (bukan satu-satunya sumber kebenaran)
 
   /* ------------------------------------------------------------------ *
    * 4. STATE
@@ -136,6 +168,23 @@
   let fieldCurrentNo = null;
   let objectUrlCache = {};    // id -> objectURL, revoked on unmount/close
 
+  function defaultDriveFileState() {
+    return { status: "idle", fileId: null, fileUrl: null, message: null };
+  }
+
+  function defaultDriveState() {
+    return {
+      folderId: null,
+      folderUrl: null,
+      files: {
+        front: defaultDriveFileState(),
+        right: defaultDriveFileState(),
+        left: defaultDriveFileState(),
+        alfamartVideo: defaultDriveFileState(),
+      },
+    };
+  }
+
   function defaultEntryState() {
     return {
       status: "belum",
@@ -143,7 +192,22 @@
       visitTime: null,
       completedAt: null,
       doc: { front: false, right: false, left: false, alfamartVideo: false },
+      drive: defaultDriveState(),
     };
+  }
+
+  // Memastikan entry lama (dibuat sebelum fitur Google Drive ada) tetap
+  // punya bentuk data "drive" yang lengkap, tanpa menimpa progres upload
+  // yang sudah tersimpan.
+  function ensureDriveShape(entry) {
+    if (!entry.drive) entry.drive = defaultDriveState();
+    if (!entry.drive.files) entry.drive.files = {};
+    DOC_SLOTS.forEach((s) => {
+      if (!entry.drive.files[s.key]) entry.drive.files[s.key] = defaultDriveFileState();
+    });
+    if (typeof entry.drive.folderId === "undefined") entry.drive.folderId = null;
+    if (typeof entry.drive.folderUrl === "undefined") entry.drive.folderUrl = null;
+    return entry.drive;
   }
 
   function emptyEntries() {
@@ -184,6 +248,7 @@
               if (!rep.entries) rep.entries = {};
               if (!rep.entries[u.no]) rep.entries[u.no] = defaultEntryState();
               if (!rep.entries[u.no].doc) rep.entries[u.no].doc = { front: false, right: false, left: false, alfamartVideo: false };
+              ensureDriveShape(rep.entries[u.no]);
             });
           });
           if (typeof parsed.nextOrderIndex !== "number") parsed.nextOrderIndex = Object.keys(parsed.reports).length + 1;
@@ -206,6 +271,7 @@
           if (legacyState[u.no]) {
             const merged = Object.assign(defaultEntryState(), legacyState[u.no]);
             merged.doc = Object.assign({ front: false, right: false, left: false, alfamartVideo: false }, legacyState[u.no].doc || {});
+            ensureDriveShape(merged);
             firstReport.entries[u.no] = merged;
             hadLegacy = true;
           }
@@ -239,7 +305,9 @@
 
   function getEntry(no) {
     const rep = getActiveReport();
-    return rep.entries[no] || (rep.entries[no] = defaultEntryState());
+    const e = rep.entries[no] || (rep.entries[no] = defaultEntryState());
+    ensureDriveShape(e);
+    return e;
   }
 
   function touchActiveReport() {
@@ -459,6 +527,231 @@
     }
     root.legacyMediaMigrated = true;
     saveRoot();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 8b. GOOGLE DRIVE INTEGRATION
+   * Setiap foto/video yang disimpan lokal (IndexedDB) juga otomatis dikirim
+   * ke Google Drive lewat Apps Script Web App (lihat MANUAL CONFIGURATION
+   * di bagian atas file ini, dan Code.gs untuk backend-nya). Jika belum
+   * dikonfigurasi, atau upload gagal, file TETAP tersimpan lokal — tidak
+   * ada dokumentasi yang hilang.
+   * ------------------------------------------------------------------ */
+
+  // Batas ukuran file untuk AUTO-upload ke Drive. Google Apps Script Web App
+  // punya batas ukuran payload & waktu eksekusi; di atas batas ini upload
+  // otomatis dilewati (file tetap aman di penyimpanan lokal perangkat), dan
+  // pengguna bisa menekan "Upload sekarang" untuk tetap mencoba secara manual.
+  const MAX_DRIVE_AUTO_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+
+  function isDriveConfigured() {
+    return typeof APPS_SCRIPT_URL === "string" &&
+      /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(APPS_SCRIPT_URL.trim());
+  }
+
+  function sanitizeLocationName(str) {
+    return String(str || "")
+      .replace(/[\/\\]/g, "-")
+      .replace(/\.\./g, "-")
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 100);
+  }
+
+  // Nama folder Drive per lokasi. Memakai "nomor - nama UMKM" (bukan hanya
+  // nama) karena beberapa UMKM pada data ini berbagi nama yang sama persis
+  // (misal beberapa "Aneka Gorengan") — supaya tidak tercampur ke satu folder.
+  function locationNameFor(u) {
+    return sanitizeLocationName(u.no + " - " + u.name) || ("Lokasi " + u.no);
+  }
+
+  function sanitizeFileNamePart(name) {
+    return String(name || "")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 60);
+  }
+
+  function driveTimestamp() {
+    const d = new Date();
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+      "_" + pad2(d.getHours()) + "-" + pad2(d.getMinutes()) + "-" + pad2(d.getSeconds());
+  }
+
+  function buildDriveFileName(slot, file) {
+    const ext = mimeToExt(file.type, slot.kind);
+    const base = file.name ? sanitizeFileNamePart(file.name.replace(/\.[^.]+$/, "")) : "";
+    return driveTimestamp() + "_" + slot.slug + (base ? "_" + base : "") + "." + ext;
+  }
+
+  function loadDriveFolderCache() {
+    try {
+      const raw = localStorage.getItem(DRIVE_FOLDER_CACHE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+  }
+
+  function getCachedFolder(locationName) {
+    const cache = loadDriveFolderCache();
+    return cache[locationName] || null;
+  }
+
+  function setCachedFolder(locationName, folderId, folderUrl) {
+    try {
+      const cache = loadDriveFolderCache();
+      cache[locationName] = { folderId: folderId, folderUrl: folderUrl, updatedAt: new Date().toISOString() };
+      localStorage.setItem(DRIVE_FOLDER_CACHE_KEY, JSON.stringify(cache));
+    } catch (e) { /* cache Drive folder bersifat opsional, aman diabaikan jika gagal */ }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error("Gagal membaca file"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Wrapper fetch generik untuk memanggil Apps Script: menangani offline,
+  // timeout, respons non-JSON, dan error logis dari backend, lalu selalu
+  // mengembalikan pesan yang mudah dimengerti manusia (bukan pesan teknis).
+  function driveFetchJSON(url, options, timeoutMs) {
+    return new Promise((resolve) => {
+      if (typeof navigator !== "undefined" && "onLine" in navigator && !navigator.onLine) {
+        resolve({ ok: false, error: "Tidak ada koneksi internet. Periksa jaringan lalu coba lagi." });
+        return;
+      }
+      let settled = false;
+      const controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
+      const timer = setTimeout(() => { if (controller) controller.abort(); }, timeoutMs || 30000);
+      const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
+      const fetchOpts = Object.assign({}, options);
+      if (controller) fetchOpts.signal = controller.signal;
+
+      fetch(url, fetchOpts)
+        .then((res) => res.text().then((text) => ({ res: res, text: text })))
+        .then(({ res, text }) => {
+          let data = null;
+          try { data = JSON.parse(text); } catch (e) { data = null; }
+          if (!data) {
+            finish({ ok: false, error: "Respon server Apps Script tidak valid (bukan JSON). Pastikan URL Web App benar dan sudah di-deploy ulang." });
+            return;
+          }
+          if (data.success === false) {
+            finish({ ok: false, error: data.error || "Upload ke Google Drive gagal.", data: data });
+            return;
+          }
+          if (!res.ok) {
+            finish({ ok: false, error: "Server Apps Script mengembalikan error (kode " + res.status + ")." });
+            return;
+          }
+          finish({ ok: true, data: data });
+        })
+        .catch((err) => {
+          if (err && err.name === "AbortError") {
+            finish({ ok: false, error: "Waktu upload ke Google Drive habis (timeout). Coba lagi dengan koneksi yang lebih stabil." });
+          } else {
+            finish({ ok: false, error: "Tidak dapat terhubung ke Apps Script. Periksa APPS_SCRIPT_URL dan koneksi internet." });
+          }
+        });
+    });
+  }
+
+  // Mengupload satu file dokumentasi ke Google Drive. Selalu memperbarui
+  // entry.drive.files[slot.key] (status: idle/uploading/done/error/skipped)
+  // dan menyimpannya, supaya status bertahan walau halaman ditutup/dibuka lagi.
+  async function performDriveUpload(no, slot, file, opts) {
+    opts = opts || {};
+    const entry = getEntry(no);
+    const fstate = entry.drive.files[slot.key];
+
+    if (!isDriveConfigured()) {
+      fstate.status = "idle";
+      fstate.message = null;
+      saveRoot();
+      return { ok: false, reason: "not-configured" };
+    }
+
+    if (!opts.force && file.size > MAX_DRIVE_AUTO_UPLOAD_BYTES) {
+      fstate.status = "skipped";
+      fstate.message = "Ukuran file > " + Math.round(MAX_DRIVE_AUTO_UPLOAD_BYTES / (1024 * 1024)) + " MB, auto-upload dilewati.";
+      saveRoot();
+      if (opts.onUpdate) opts.onUpdate();
+      return { ok: false, reason: "too-large" };
+    }
+
+    fstate.status = "uploading";
+    fstate.message = null;
+    saveRoot();
+    if (opts.onUpdate) opts.onUpdate();
+
+    const u = UMKM_BY_NO[no];
+    const locationName = locationNameFor(u);
+    const cached = getCachedFolder(locationName);
+
+    let base64;
+    try {
+      base64 = await fileToBase64(file);
+    } catch (e) {
+      fstate.status = "error";
+      fstate.message = "Gagal membaca file untuk diupload.";
+      saveRoot();
+      if (opts.onUpdate) opts.onUpdate();
+      return { ok: false, reason: "read-failed" };
+    }
+
+    const payload = {
+      action: "upload",
+      locationName: locationName,
+      fileName: buildDriveFileName(slot, file),
+      mimeType: file.type || (slot.kind === "photo" ? "image/jpeg" : "video/mp4"),
+      dataBase64: base64,
+      folderIdHint: (cached && cached.folderId) || "",
+    };
+
+    // Timeout dihitung dari ukuran file supaya file besar tidak langsung
+    // dianggap timeout padahal masih dalam proses upload.
+    const timeoutMs = Math.min(180000, 20000 + Math.round(file.size / (1024 * 1024)) * 4000);
+
+    const result = await driveFetchJSON(APPS_SCRIPT_URL, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, timeoutMs);
+
+    if (result.ok) {
+      const d = result.data;
+      fstate.status = "done";
+      fstate.fileId = d.fileId || null;
+      fstate.fileUrl = d.fileUrl || null;
+      fstate.message = null;
+      entry.drive.folderId = d.folderId || entry.drive.folderId;
+      entry.drive.folderUrl = d.folderUrl || entry.drive.folderUrl;
+      if (d.folderId) setCachedFolder(locationName, d.folderId, d.folderUrl);
+      saveRoot();
+      if (opts.onUpdate) opts.onUpdate();
+      return { ok: true, data: d };
+    }
+
+    fstate.status = "error";
+    fstate.message = result.error || "Upload ke Drive gagal.";
+    saveRoot();
+    if (opts.onUpdate) opts.onUpdate();
+    return { ok: false, reason: "request-failed", error: result.error };
+  }
+
+  async function testDriveConnection() {
+    if (!isDriveConfigured()) {
+      return { ok: false, error: "APPS_SCRIPT_URL belum diisi di script.js." };
+    }
+    const sep = APPS_SCRIPT_URL.indexOf("?") >= 0 ? "&" : "?";
+    return driveFetchJSON(APPS_SCRIPT_URL + sep + "action=test", { method: "GET" }, 20000);
   }
 
   function mimeToExt(mime, kind) {
@@ -804,6 +1097,7 @@
     container.innerHTML =
       '<div>' +
         '<div class="vw-section-title"><span>Dokumentasi</span><span class="vw-count" data-role="doc-count"></span></div>' +
+        '<a class="link-btn drive-folder-link" data-role="drive-folder-link" href="#" target="_blank" rel="noopener" hidden>' + iconSpan("folder") + '<span>Buka Folder Drive</span></a>' +
         '<div class="doc-progress-bar"><div class="doc-progress-bar__fill" data-role="doc-fill" style="width:0%"></div></div>' +
         '<div class="doc-grid" data-role="doc-grid"></div>' +
       '</div>' +
@@ -820,6 +1114,7 @@
     const docGrid = container.querySelector('[data-role="doc-grid"]');
     const docFill = container.querySelector('[data-role="doc-fill"]');
     const docCount = container.querySelector('[data-role="doc-count"]');
+    const driveFolderLink = container.querySelector('[data-role="drive-folder-link"]');
     const notesArea = container.querySelector('[data-role="notes"]');
     const notesHint = container.querySelector('[data-role="notes-hint"]');
     const btnComplete = container.querySelector('[data-role="btn-complete"]');
@@ -854,6 +1149,10 @@
       docCount.textContent = filled + " / " + DOC_SLOTS.length + " lengkap";
       docFill.style.width = pct + "%";
       docFill.style.background = filled === DOC_SLOTS.length ? "var(--accent)" : "var(--amber)";
+      if (driveFolderLink) {
+        if (e.drive.folderUrl) { driveFolderLink.href = e.drive.folderUrl; driveFolderLink.hidden = false; }
+        else { driveFolderLink.hidden = true; }
+      }
       docGrid.innerHTML = "";
       for (const slot of DOC_SLOTS) {
         docGrid.appendChild(await buildDocSlotEl(slot));
@@ -928,16 +1227,53 @@
         await saveMediaFile(reportId, no, slot.key, file);
         const e = getEntry(no);
         e.doc[slot.key] = true;
+        // Reset status Drive untuk file baru ini (menimpa status file lama di slot yang sama).
+        e.drive.files[slot.key] = defaultDriveFileState();
         recomputeStatus(no);
         touchActiveReport();
         saveRoot();
         if (!destroyed) await refreshDocUI();
         onChange();
         showToast((slot.kind === "photo" ? "Foto" : "Video") + " tersimpan.");
+
+        // Upload ke Google Drive berjalan di latar belakang — tidak menahan UI,
+        // dan jika gagal, file tetap aman tersimpan di perangkat ini.
+        performDriveUpload(no, slot, file, {}).then(() => {
+          if (!destroyed) refreshDocUI();
+        });
       } catch (err) {
         console.error(err);
         showToast("Gagal menyimpan dokumentasi. Coba lagi atau pilih file lebih kecil.", true);
       }
+    }
+
+    // Mencoba (ulang) upload ke Drive untuk file yang SUDAH tersimpan lokal —
+    // dipakai oleh tombol "Upload" / "Coba lagi" / "Upload sekarang".
+    async function manualDriveRetry(slot, force) {
+      const entry = getEntry(no);
+      entry.drive.files[slot.key].status = "uploading";
+      entry.drive.files[slot.key].message = null;
+      saveRoot();
+      if (!destroyed) await refreshDocUI();
+      try {
+        const record = await getMediaFile(reportId, no, slot.key);
+        if (!record || !record.blob) {
+          entry.drive.files[slot.key].status = "error";
+          entry.drive.files[slot.key].message = "File lokal tidak ditemukan di perangkat ini.";
+          saveRoot();
+        } else {
+          const blob = record.blob;
+          if (!blob.name && record.name) { try { blob.name = record.name; } catch (e) { /* Blob tanpa nama tetap bisa diupload */ } }
+          if (!blob.type && record.type) { try { blob.type = record.type; } catch (e) { /* abaikan */ } }
+          await performDriveUpload(no, slot, blob, { force: !!force });
+        }
+      } catch (err) {
+        console.error(err);
+        entry.drive.files[slot.key].status = "error";
+        entry.drive.files[slot.key].message = "Gagal membaca file lokal untuk diupload.";
+        saveRoot();
+      }
+      if (!destroyed) await refreshDocUI();
     }
 
     async function handleRemoveMedia(slot) {
@@ -957,6 +1293,43 @@
         console.error(err);
         showToast("Gagal menghapus dokumentasi.", true);
       }
+    }
+
+    // Baris kecil status upload Google Drive di bawah preview foto/video.
+    function buildDriveStatusRow(slot) {
+      const entry = getEntry(no);
+      const fstate = entry.drive.files[slot.key];
+      const row = document.createElement("div");
+      row.className = "drive-status drive-status--" + fstate.status;
+
+      if (!isDriveConfigured()) {
+        row.classList.add("drive-status--unconfigured");
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">Google Drive belum dikonfigurasi</span>';
+        return row;
+      }
+
+      if (fstate.status === "uploading") {
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">Mengupload ke Drive&hellip;</span>';
+      } else if (fstate.status === "done") {
+        row.innerHTML = iconSpan("checkCircle") + '<span class="drive-status__text">Tersimpan di Drive</span>' +
+          '<a class="drive-status__link" href="' + escapeHtml(fstate.fileUrl || "#") + '" target="_blank" rel="noopener">Buka</a>';
+      } else if (fstate.status === "error") {
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">' + escapeHtml(fstate.message || "Upload ke Drive gagal") + '</span>' +
+          '<button type="button" class="drive-status__retry" data-act="drive-retry">Coba lagi</button>';
+      } else if (fstate.status === "skipped") {
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">' + escapeHtml(fstate.message || "Auto-upload dilewati") + '</span>' +
+          '<button type="button" class="drive-status__retry" data-act="drive-retry-force">Upload sekarang</button>';
+      } else {
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">Belum diupload ke Drive</span>' +
+          '<button type="button" class="drive-status__retry" data-act="drive-retry">Upload</button>';
+      }
+
+      const retryBtn = row.querySelector('[data-act="drive-retry"]');
+      if (retryBtn) retryBtn.addEventListener("click", () => manualDriveRetry(slot, false));
+      const forceBtn = row.querySelector('[data-act="drive-retry-force"]');
+      if (forceBtn) forceBtn.addEventListener("click", () => manualDriveRetry(slot, true));
+
+      return row;
     }
 
     async function buildDocSlotEl(slot) {
@@ -1017,6 +1390,8 @@
             });
             actions.querySelector('[data-act="replace"]').addEventListener("click", () => picker.open());
             actions.querySelector('[data-act="remove"]').addEventListener("click", () => handleRemoveMedia(slot));
+
+            body.appendChild(buildDriveStatusRow(slot));
           } else {
             const missing = document.createElement("p");
             missing.className = "doc-slot__empty-text";
@@ -1587,6 +1962,42 @@
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * GOOGLE DRIVE — Settings: status konfigurasi & tombol Tes Koneksi
+   * ------------------------------------------------------------------ */
+  function renderDriveConfigStatus() {
+    const el = $("#driveConfigStatus");
+    if (!el) return;
+    el.textContent = isDriveConfigured()
+      ? "APPS_SCRIPT_URL sudah diisi. Gunakan tombol \u201cTes Koneksi\u201d untuk memastikan sambungan ke Google Drive berjalan."
+      : "Belum dikonfigurasi. Isi APPS_SCRIPT_URL di bagian atas script.js (lihat komentar MANUAL CONFIGURATION). Selama belum diisi, dokumentasi tetap tersimpan normal di perangkat ini, hanya belum otomatis terkirim ke Drive.";
+  }
+
+  async function handleTestDriveConnection() {
+    const btn = $("#btnTestDrive");
+    if (!isDriveConfigured()) {
+      showToast("APPS_SCRIPT_URL belum diisi di script.js.", true);
+      return;
+    }
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Menguji...";
+    const result = await testDriveConnection();
+    btn.disabled = false;
+    btn.textContent = original;
+    if (result.ok) {
+      showToast("\u2713 Terhubung. Folder utama: " + (result.data.rootFolderName || "-"));
+    } else {
+      showToast(result.error || "Gagal terhubung ke Google Drive.", true);
+    }
+  }
+
+  function bindDriveSettings() {
+    renderDriveConfigStatus();
+    const btn = $("#btnTestDrive");
+    if (btn) btn.addEventListener("click", handleTestDriveConnection);
+  }
+
   function bindReportsModal() {
     $("#reportSwitcherBtn").addEventListener("click", openReportsModal);
     $("#reportsClose").addEventListener("click", closeReportsModal);
@@ -1631,6 +2042,7 @@
     bindFieldMode();
     bindLightbox();
     bindSettings();
+    bindDriveSettings();
     bindReportsModal();
     bindKeyboard();
 
