@@ -132,6 +132,7 @@
     gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m3 16 5-4.5 3.5 3 4-3.8L21 15"/><circle cx="8.2" cy="8.5" r="1.4"/></svg>',
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5a1 1 0 0 1 1-1h4.4l1.6 2h9a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1V6.5Z"/></svg>',
     cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .4-7.98A5.5 5.5 0 0 0 7.1 9.8 4 4 0 0 0 7 18Z"/></svg>',
+    whatsapp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.8 17.3 4 20l2.8-.7A8.4 8.4 0 1 0 4 12a8.3 8.3 0 0 0 1.1 4.2Z"/><path d="M9 9.6c0-.5.4-.9.9-.9h.6c.3 0 .6.2.7.5l.6 1.6c.1.3 0 .6-.2.8l-.6.6c.5 1 1.4 1.9 2.4 2.4l.6-.6c.2-.2.5-.3.8-.2l1.6.6c.3.1.5.4.5.7v.6c0 .5-.4.9-.9.9-3.6 0-7-3.2-7-6.8Z"/></svg>',
   };
   function icon(name) { return ICONS[name] || ""; }
   function iconSpan(name, extraClass) {
@@ -169,7 +170,13 @@
   let objectUrlCache = {};    // id -> objectURL, revoked on unmount/close
 
   function defaultDriveFileState() {
-    return { status: "idle", fileId: null, fileUrl: null, message: null };
+    return {
+      status: "idle", fileId: null, fileUrl: null, message: null,
+      // Field tambahan untuk upload berbagian (chunked) — supaya "Coba lagi"
+      // bisa melanjutkan dari bagian terakhir yang berhasil, bukan mengulang
+      // dari awal, dan supaya retry tidak membuat file duplikat di Drive.
+      uploadId: null, totalChunks: 0, sentChunks: [], fileName: null, progressText: null,
+    };
   }
 
   function defaultDriveState() {
@@ -203,7 +210,18 @@
     if (!entry.drive) entry.drive = defaultDriveState();
     if (!entry.drive.files) entry.drive.files = {};
     DOC_SLOTS.forEach((s) => {
-      if (!entry.drive.files[s.key]) entry.drive.files[s.key] = defaultDriveFileState();
+      if (!entry.drive.files[s.key]) {
+        entry.drive.files[s.key] = defaultDriveFileState();
+      } else {
+        // Data lama (sebelum fitur upload berbagian ada) mungkin belum
+        // punya field uploadId/totalChunks/dst — tambahkan tanpa menimpa
+        // progres yang sudah ada.
+        const fs = entry.drive.files[s.key];
+        const defaults = defaultDriveFileState();
+        Object.keys(defaults).forEach((k) => {
+          if (typeof fs[k] === "undefined") fs[k] = defaults[k];
+        });
+      }
     });
     if (typeof entry.drive.folderId === "undefined") entry.drive.folderId = null;
     if (typeof entry.drive.folderUrl === "undefined") entry.drive.folderUrl = null;
@@ -530,6 +548,54 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * 8a. MEDIA SOURCE RESOLUTION — helper terpusat
+   * Dipakai di semua tempat yang menampilkan dokumentasi (Detail UMKM,
+   * Field Mode) supaya urutan pencarian medianya selalu sama:
+   *   1. IndexedDB perangkat ini (prioritas utama, tidak diubah)
+   *   2. Metadata Google Drive yang tersimpan di entry.drive.files[slot]
+   *      (fallback — dipakai kalau file lokal tidak ada, mis. setelah
+   *      import JSON dari perangkat lain)
+   *   3. "missing" kalau keduanya tidak tersedia
+   * ------------------------------------------------------------------ */
+  function buildDriveThumbnailUrl(fileId) {
+    // Pendekatan yang paling kompatibel untuk preview gambar Google Drive
+    // langsung di tag <img> tanpa perlu API key di frontend. fileUrl biasa
+    // (drive.google.com/file/d/.../view) BUKAN direct image URL, jadi tidak
+    // dipakai untuk <img src>.
+    return "https://drive.google.com/thumbnail?id=" + encodeURIComponent(fileId) + "&sz=w1200";
+  }
+
+  async function getMediaSource(reportId, no, slot) {
+    // 1. IndexedDB perangkat ini — selalu diprioritaskan, tidak diubah.
+    try {
+      const record = await getMediaFile(reportId, no, slot.key);
+      if (record && record.blob) {
+        return { source: "local", blob: record.blob, type: record.type, name: record.name };
+      }
+    } catch (err) {
+      // Gagal baca IndexedDB (jarang terjadi) -> tetap lanjut coba Drive,
+      // jangan langsung anggap dokumentasi hilang.
+      console.error("Gagal membaca media lokal untuk " + no + "/" + slot.key, err);
+    }
+
+    // 2. Fallback: metadata Google Drive yang sudah ada pada entry (baik
+    // hasil upload di perangkat ini maupun hasil import JSON dari rekan).
+    const entry = getEntry(no);
+    const fstate = entry.drive && entry.drive.files ? entry.drive.files[slot.key] : null;
+    if (fstate && fstate.fileId) {
+      return {
+        source: "drive",
+        fileId: fstate.fileId,
+        fileUrl: fstate.fileUrl || null,
+        previewUrl: slot.kind === "photo" ? buildDriveThumbnailUrl(fstate.fileId) : null,
+      };
+    }
+
+    // 3. Tidak ditemukan di manapun.
+    return { source: "missing" };
+  }
+
+  /* ------------------------------------------------------------------ *
    * 8b. GOOGLE DRIVE INTEGRATION
    * Setiap foto/video yang disimpan lokal (IndexedDB) juga otomatis dikirim
    * ke Google Drive lewat Apps Script Web App (lihat MANUAL CONFIGURATION
@@ -538,11 +604,40 @@
    * ada dokumentasi yang hilang.
    * ------------------------------------------------------------------ */
 
-  // Batas ukuran file untuk AUTO-upload ke Drive. Google Apps Script Web App
-  // punya batas ukuran payload & waktu eksekusi; di atas batas ini upload
-  // otomatis dilewati (file tetap aman di penyimpanan lokal perangkat), dan
-  // pengguna bisa menekan "Upload sekarang" untuk tetap mencoba secara manual.
-  const MAX_DRIVE_AUTO_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+  // Batas ukuran file untuk AUTO-upload ke Drive. Karena upload sekarang
+  // dikirim per-bagian kecil (lihat DRIVE_CHUNK_RAW_BYTES di bawah), batas
+  // ini bisa lebih longgar daripada sebelumnya — tidak lagi dibatasi oleh
+  // ukuran satu request. Di atas batas ini upload otomatis dilewati (file
+  // tetap aman di penyimpanan lokal perangkat), dan pengguna bisa menekan
+  // "Upload sekarang" untuk tetap mencoba secara manual.
+  const MAX_DRIVE_AUTO_UPLOAD_BYTES = 60 * 1024 * 1024; // 60 MB — cukup untuk video 20–30 detik
+
+  // Ukuran satu "bagian" (chunk) file sebelum di-base64 (dalam byte). Ini
+  // adalah bagian dari perbaikan utama upload mobile: daripada mengirim
+  // SATU request raksasa berisi seluruh foto/video sekaligus (yang mudah
+  // timeout / gagal di jaringan seluler yang lambat & tidak stabil), file
+  // dipecah menjadi bagian-bagian kecil ini dan dikirim satu per satu.
+  const DRIVE_CHUNK_RAW_BYTES = 1500 * 1024; // ~1.5 MB per bagian (sebelum jadi base64, jadi ~2 MB per request)
+  const DRIVE_CHUNK_TIMEOUT_MS = 60000; // timeout PER BAGIAN (bukan per file) — bagian kecil, jadi ini sudah longgar
+  const DRIVE_CHUNK_MAX_AUTO_RETRY = 3; // percobaan ulang otomatis per bagian sebelum menyerah ke tombol manual
+
+  // Menghasilkan ID unik untuk satu upaya upload. Dipakai server untuk
+  // mengenali bagian-bagian mana yang milik file yang sama, dan untuk
+  // mencegah file duplikat jika "Coba lagi" ditekan setelah upload
+  // sebenarnya sudah selesai di server tapi responsnya tidak sampai ke HP.
+  function generateUploadId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    // Fallback untuk browser/WebView lama yang belum punya crypto.randomUUID.
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
   function isDriveConfigured() {
     return typeof APPS_SCRIPT_URL === "string" &&
@@ -619,6 +714,24 @@
     });
   }
 
+  // Sama seperti fileToBase64, tapi hanya membaca SATU potongan kecil file
+  // (lewat File.slice) — dipakai untuk upload berbagian supaya HP dengan RAM
+  // terbatas tidak pernah harus menyimpan seluruh foto/video sebagai satu
+  // string base64 raksasa di memori sekaligus.
+  function fileSliceToBase64(file, start, end) {
+    return new Promise((resolve, reject) => {
+      const blob = file.slice(start, end);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error("Gagal membaca bagian file"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
   // Wrapper fetch generik untuk memanggil Apps Script: menangani offline,
   // timeout, respons non-JSON, dan error logis dari backend, lalu selalu
   // mengembalikan pesan yang mudah dimengerti manusia (bukan pesan teknis).
@@ -664,9 +777,55 @@
     });
   }
 
-  // Mengupload satu file dokumentasi ke Google Drive. Selalu memperbarui
-  // entry.drive.files[slot.key] (status: idle/uploading/done/error/skipped)
-  // dan menyimpannya, supaya status bertahan walau halaman ditutup/dibuka lagi.
+  // Mengirim satu bagian (chunk) ke Apps Script, dengan percobaan ulang
+  // otomatis (backoff) sebelum benar-benar dianggap gagal. Chunk kecil +
+  // timeout yang cukup (DRIVE_CHUNK_TIMEOUT_MS) membuat ini jauh lebih
+  // tahan terhadap jaringan seluler yang lambat/putus-putus dibanding
+  // mengirim seluruh file dalam satu request raksasa.
+  async function sendDriveChunk_(payload, attempt) {
+    const result = await driveFetchJSON(APPS_SCRIPT_URL, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, DRIVE_CHUNK_TIMEOUT_MS);
+    if (result.ok) return result;
+    if (attempt < DRIVE_CHUNK_MAX_AUTO_RETRY) {
+      await sleep(1200 * (attempt + 1));
+      return sendDriveChunk_(payload, attempt + 1);
+    }
+    return result;
+  }
+
+  function finalizeDriveSuccess_(entry, fstate, locationName, d, opts) {
+    fstate.status = "done";
+    fstate.fileId = d.fileId || null;
+    fstate.fileUrl = d.fileUrl || null;
+    fstate.message = null;
+    fstate.progressText = null;
+    fstate.uploadId = null;
+    fstate.totalChunks = 0;
+    fstate.sentChunks = [];
+    entry.drive.folderId = d.folderId || entry.drive.folderId;
+    entry.drive.folderUrl = d.folderUrl || entry.drive.folderUrl;
+    if (d.folderId) setCachedFolder(locationName, d.folderId, d.folderUrl);
+    saveRoot();
+    if (opts.onUpdate) opts.onUpdate();
+    console.log("[Drive] Upload success", d);
+    return { ok: true, data: d };
+  }
+
+  // Mengupload satu file dokumentasi ke Google Drive secara BERBAGIAN
+  // (chunked). Ini adalah perbaikan utama untuk masalah upload di HP:
+  // - File dipecah jadi bagian ~1.5 MB dan dikirim satu per satu, bukan
+  //   sebagai satu request JSON raksasa (root cause timeout/"bukan JSON"
+  //   di Android). Setiap bagian punya timeout sendiri yang jauh lebih
+  //   longgar dibanding sisa waktu yang dibutuhkan seluruh file.
+  // - uploadId dipakai server untuk mengenali upaya upload yang sama, jadi
+  //   "Coba lagi" melanjutkan dari bagian terakhir yang berhasil (bukan
+  //   mengulang dari nol) dan tidak membuat file duplikat di Drive kalau
+  //   ternyata server sudah selesai memprosesnya sebelumnya.
+  // Selalu memperbarui entry.drive.files[slot.key] (status: idle/uploading/
+  // done/error/skipped) dan menyimpannya, supaya status + progres bertahan
+  // walau halaman ditutup/dibuka lagi.
   async function performDriveUpload(no, slot, file, opts) {
     opts = opts || {};
     const entry = getEntry(no);
@@ -687,63 +846,139 @@
       return { ok: false, reason: "too-large" };
     }
 
-    fstate.status = "uploading";
-    fstate.message = null;
-    saveRoot();
-    if (opts.onUpdate) opts.onUpdate();
-
     const u = UMKM_BY_NO[no];
     const locationName = locationNameFor(u);
     const cached = getCachedFolder(locationName);
 
-    let base64;
-    try {
-      base64 = await fileToBase64(file);
-    } catch (e) {
-      fstate.status = "error";
-      fstate.message = "Gagal membaca file untuk diupload.";
-      saveRoot();
-      if (opts.onUpdate) opts.onUpdate();
-      return { ok: false, reason: "read-failed" };
-    }
+    // Jika ini retry dari upload yang sebelumnya sudah mulai mengirim
+    // sebagian bagian, lanjutkan uploadId yang sama supaya bagian yang
+    // sudah terkirim tidak perlu dikirim ulang.
+    const resuming = !!(fstate.uploadId && fstate.totalChunks > 0 && Array.isArray(fstate.sentChunks) && fstate.sentChunks.length > 0);
+    const uploadId = resuming ? fstate.uploadId : generateUploadId();
+    const totalChunks = Math.max(1, Math.ceil(file.size / DRIVE_CHUNK_RAW_BYTES));
+    const fileName = (resuming && fstate.fileName) ? fstate.fileName : buildDriveFileName(slot, file);
+    const mimeType = file.type || (slot.kind === "photo" ? "image/jpeg" : "video/mp4");
 
-    const payload = {
-      action: "upload",
-      locationName: locationName,
-      fileName: buildDriveFileName(slot, file),
-      mimeType: file.type || (slot.kind === "photo" ? "image/jpeg" : "video/mp4"),
-      dataBase64: base64,
-      folderIdHint: (cached && cached.folderId) || "",
-    };
-
-    // Timeout dihitung dari ukuran file supaya file besar tidak langsung
-    // dianggap timeout padahal masih dalam proses upload.
-    const timeoutMs = Math.min(180000, 20000 + Math.round(file.size / (1024 * 1024)) * 4000);
-
-    const result = await driveFetchJSON(APPS_SCRIPT_URL, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }, timeoutMs);
-
-    if (result.ok) {
-      const d = result.data;
-      fstate.status = "done";
-      fstate.fileId = d.fileId || null;
-      fstate.fileUrl = d.fileUrl || null;
-      fstate.message = null;
-      entry.drive.folderId = d.folderId || entry.drive.folderId;
-      entry.drive.folderUrl = d.folderUrl || entry.drive.folderUrl;
-      if (d.folderId) setCachedFolder(locationName, d.folderId, d.folderUrl);
-      saveRoot();
-      if (opts.onUpdate) opts.onUpdate();
-      return { ok: true, data: d };
-    }
-
-    fstate.status = "error";
-    fstate.message = result.error || "Upload ke Drive gagal.";
+    fstate.status = "uploading";
+    fstate.message = null;
+    fstate.uploadId = uploadId;
+    fstate.totalChunks = totalChunks;
+    fstate.fileName = fileName;
+    if (!Array.isArray(fstate.sentChunks)) fstate.sentChunks = [];
+    fstate.progressText = "Menyiapkan upload...";
     saveRoot();
     if (opts.onUpdate) opts.onUpdate();
-    return { ok: false, reason: "request-failed", error: result.error };
+
+    console.log("[Drive] Upload started", { no: no, slot: slot.key, uploadId: uploadId, totalChunks: totalChunks });
+    console.log("[Drive] File:", fileName, "| Size:", file.size, "| MIME:", mimeType, "| Location:", locationName);
+
+    // ---- 1. Tanya server dulu: bagian mana yang sudah pernah diterima? ----
+    // (bersifat opsional — kalau gagal/timeout, lanjut saja kirim semua
+    // bagian yang belum tercatat terkirim di localStorage perangkat ini)
+    let alreadyReceived = [];
+    try {
+      const statusResult = await driveFetchJSON(APPS_SCRIPT_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "status", uploadId: uploadId }),
+      }, 20000);
+      if (statusResult.ok && statusResult.data) {
+        if (statusResult.data.done) {
+          console.log("[Drive] Upload ini ternyata sudah selesai di server sebelumnya, memakai hasil lama.");
+          return finalizeDriveSuccess_(entry, fstate, locationName, statusResult.data, opts);
+        }
+        if (Array.isArray(statusResult.data.receivedChunks)) {
+          alreadyReceived = statusResult.data.receivedChunks;
+        }
+      }
+    } catch (e) { /* status check opsional; lanjut kirim semua bagian jika gagal */ }
+
+    async function sendOneChunk(index) {
+      const start = index * DRIVE_CHUNK_RAW_BYTES;
+      const end = Math.min(file.size, start + DRIVE_CHUNK_RAW_BYTES);
+
+      fstate.progressText = "Mengupload bagian " + (index + 1) + "/" + totalChunks + "...";
+      saveRoot();
+      if (opts.onUpdate) opts.onUpdate();
+
+      let chunkBase64;
+      try {
+        chunkBase64 = await fileSliceToBase64(file, start, end);
+      } catch (e) {
+        console.error("[Drive] Upload failed | [Drive] Error:", e);
+        fstate.status = "error";
+        fstate.message = "Gagal membaca bagian file untuk diupload.";
+        fstate.progressText = null;
+        saveRoot();
+        if (opts.onUpdate) opts.onUpdate();
+        return { ok: false, failResult: { ok: false, reason: "read-failed" } };
+      }
+
+      console.log("[Drive] Request started (bagian " + (index + 1) + "/" + totalChunks + ")");
+      const result = await sendDriveChunk_({
+        action: "chunk",
+        uploadId: uploadId,
+        chunkIndex: index,
+        totalChunks: totalChunks,
+        chunkBase64: chunkBase64,
+        locationName: locationName,
+        fileName: fileName,
+        mimeType: mimeType,
+        folderIdHint: (cached && cached.folderId) || "",
+      }, 0);
+
+      if (!result.ok) {
+        console.error("[Drive] Upload failed | [Drive] Error:", result.error);
+        fstate.status = "error";
+        fstate.message = result.error || "Upload ke Drive gagal.";
+        fstate.progressText = null;
+        saveRoot();
+        if (opts.onUpdate) opts.onUpdate();
+        return { ok: false, failResult: { ok: false, reason: "request-failed", error: result.error } };
+      }
+
+      console.log("[Drive] Response status: ok | [Drive] Parsed response:", result.data);
+      if (fstate.sentChunks.indexOf(index) < 0) fstate.sentChunks.push(index);
+      saveRoot();
+      if (opts.onUpdate) opts.onUpdate();
+      return { ok: true, data: result.data };
+    }
+
+    // ---- 2. Kirim semua bagian SELAIN bagian terakhir, lewati yang sudah ada ----
+    for (let i = 0; i < totalChunks - 1; i++) {
+      if (alreadyReceived.indexOf(i) >= 0) {
+        if (fstate.sentChunks.indexOf(i) < 0) fstate.sentChunks.push(i);
+        continue;
+      }
+      if (fstate.sentChunks.indexOf(i) >= 0) continue;
+      const sent = await sendOneChunk(i);
+      if (!sent.ok) return sent.failResult;
+    }
+
+    // ---- 3. Bagian TERAKHIR SELALU dikirim (memicu penggabungan di server) ----
+    // Dikirim ulang meski sempat tercatat "sudah diterima" sebelumnya — ini
+    // aman (server menimpa bagian yang sama, bukan menduplikasi) dan perlu
+    // untuk memicu ulang proses penggabungan jika percobaan sebelumnya
+    // sempat gagal tepat di langkah terakhir ini.
+    fstate.progressText = "Menunggu konfirmasi server...";
+    saveRoot();
+    if (opts.onUpdate) opts.onUpdate();
+    const finalSend = await sendOneChunk(totalChunks - 1);
+    if (!finalSend.ok) return finalSend.failResult;
+
+    if (finalSend.data && finalSend.data.done) {
+      return finalizeDriveSuccess_(entry, fstate, locationName, finalSend.data, opts);
+    }
+
+    // Jarang terjadi: bagian terakhir terkirim tapi server melaporkan
+    // bagian lain masih belum lengkap. Laporkan supaya user menekan "Coba
+    // lagi" (yang akan otomatis melanjutkan, bukan mengulang dari awal).
+    console.error("[Drive] Upload failed | [Drive] Raw response:", finalSend.data);
+    fstate.status = "error";
+    fstate.message = "Sebagian bagian file belum lengkap di server. Coba lagi.";
+    fstate.progressText = null;
+    saveRoot();
+    if (opts.onUpdate) opts.onUpdate();
+    return { ok: false, reason: "incomplete" };
   }
 
   async function testDriveConnection() {
@@ -786,6 +1021,26 @@
    * ------------------------------------------------------------------ */
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.from((root2 || document).querySelectorAll(sel)); }
+
+  // Helper terpusat: normalisasi nomor telepon Indonesia menjadi format yang
+  // dibutuhkan wa.me (angka saja, diawali 62, tanpa "+", spasi, "-", "(", ")").
+  //   083197207102        -> 6283197207102
+  //   0812-3456-7890      -> 6281234567890
+  //   +62 812-3456-7890   -> 6281234567890
+  function normalizeWhatsAppNumber(phone) {
+    let digits = String(phone || "").replace(/\D/g, ""); // buang semua karakter non-angka (spasi, -, (), +, dst)
+    if (digits.startsWith("0")) {
+      digits = "62" + digits.slice(1);
+    } else if (!digits.startsWith("62") && digits.startsWith("8")) {
+      // nomor tanpa awalan 0 / 62 (jarang, tapi tetap dijaga)
+      digits = "62" + digits;
+    }
+    return digits;
+  }
+
+  function waLink(phone) {
+    return "https://wa.me/" + normalizeWhatsAppNumber(phone);
+  }
 
   function escapeHtml(str) {
     return String(str || "").replace(/[&<>"']/g, (c) => ({
@@ -949,7 +1204,7 @@
       '<div class="next-card__actions">' +
         '<button class="btn btn--primary" data-action="mulai" data-no="' + next.no + '" type="button">Mulai Kunjungan</button>' +
         '<a class="btn btn--action" href="' + encodeURI(next.maps) + '" target="_blank" rel="noopener">' + iconSpan("pin") + ' Maps</a>' +
-        '<a class="btn btn--action" href="tel:' + next.phone.replace(/[^0-9+]/g, "") + '">' + iconSpan("phone") + ' Telepon</a>' +
+        '<a class="btn btn--action" href="' + waLink(next.phone) + '" target="_blank" rel="noopener">' + iconSpan("whatsapp") + ' WhatsApp</a>' +
       '</div>';
     containerEl.querySelector('[data-action="mulai"]').addEventListener("click", () => {
       fieldCurrentNo = next.no;
@@ -1062,7 +1317,7 @@
           '<div class="umkm-row__meta-line">' + iconSpan("phone") + ' ' + escapeHtml(u.phone) + '</div>' +
           '<div class="umkm-row__detail-actions">' +
             '<a class="btn btn--action" href="' + encodeURI(u.maps) + '" target="_blank" rel="noopener">' + iconSpan("pin") + ' Maps</a>' +
-            '<a class="btn btn--action" href="tel:' + u.phone.replace(/[^0-9+]/g, "") + '">' + iconSpan("phone") + ' Telepon</a>' +
+            '<a class="btn btn--action" href="' + waLink(u.phone) + '" target="_blank" rel="noopener">' + iconSpan("whatsapp") + ' WhatsApp</a>' +
             '<button class="btn btn--primary" data-open-detail="' + u.no + '" type="button">Detail</button>' +
           '</div>' +
         '</div>' +
@@ -1309,7 +1564,7 @@
       }
 
       if (fstate.status === "uploading") {
-        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">Mengupload ke Drive&hellip;</span>';
+        row.innerHTML = iconSpan("cloud") + '<span class="drive-status__text">' + escapeHtml(fstate.progressText || "Mengupload ke Drive...") + '</span>';
       } else if (fstate.status === "done") {
         row.innerHTML = iconSpan("checkCircle") + '<span class="drive-status__text">Tersimpan di Drive</span>' +
           '<a class="drive-status__link" href="' + escapeHtml(fstate.fileUrl || "#") + '" target="_blank" rel="noopener">Buka</a>';
@@ -1330,6 +1585,136 @@
       if (forceBtn) forceBtn.addEventListener("click", () => manualDriveRetry(slot, true));
 
       return row;
+    }
+
+    // Badge kecil "Lokal" / "Drive" di atas preview, supaya jelas dari mana
+    // sumber file yang sedang ditampilkan (lihat butir 6 spesifikasi).
+    function appendSourceBadge(body, label, mod) {
+      const row = document.createElement("div");
+      row.className = "doc-slot__source-row";
+      row.innerHTML = '<span class="doc-slot__source-badge doc-slot__source-badge--' + mod + '">' + escapeHtml(label) + '</span>';
+      body.appendChild(row);
+    }
+
+    // Catatan fallback dengan tombol "Buka di Drive" — dipakai untuk video
+    // Drive, foto Drive yang preview-nya gagal dimuat, dan kondisi lain di
+    // mana kita tahu file ADA di Drive tapi tidak bisa ditampilkan langsung.
+    function appendDriveFallbackNote(body, media, text) {
+      const wrap = document.createElement("div");
+      wrap.className = "doc-slot__drive-fallback";
+      wrap.innerHTML = '<p class="doc-slot__empty-text">' + escapeHtml(text) + '</p>' +
+        (media.fileUrl ? '<a class="btn btn--action btn--sm" href="' + escapeHtml(media.fileUrl) + '" target="_blank" rel="noopener">' + iconSpan("folder") + ' Buka di Drive</a>' : '');
+      body.appendChild(wrap);
+    }
+
+    // Sumber = file lokal (IndexedDB) — perilaku sama seperti sebelumnya.
+    function renderLocalSlotBody(body, slot, media, cacheKey) {
+      appendSourceBadge(body, "Lokal", "local");
+
+      const url = trackUrl(cacheKey, URL.createObjectURL(media.blob));
+      let mediaEl;
+      if (slot.kind === "photo") {
+        mediaEl = document.createElement("img");
+        mediaEl.className = "doc-slot__preview";
+        mediaEl.src = url;
+        mediaEl.alt = slot.label;
+        mediaEl.addEventListener("click", () => openLightbox("img", url));
+      } else {
+        mediaEl = document.createElement("video");
+        mediaEl.className = "doc-slot__preview";
+        mediaEl.src = url;
+        mediaEl.controls = true;
+        mediaEl.playsInline = true;
+      }
+      body.appendChild(mediaEl);
+
+      const actions = document.createElement("div");
+      actions.className = "doc-slot__file-actions";
+      actions.innerHTML =
+        '<button class="btn btn--ghost btn--sm" data-act="dl">' + iconSpan("download") + ' Unduh</button>' +
+        '<button class="btn btn--ghost btn--sm" data-act="replace">' + iconSpan("swap") + ' Ganti</button>' +
+        '<button class="btn btn--danger btn--sm" data-act="remove">' + iconSpan("trash") + ' Hapus</button>';
+      body.appendChild(actions);
+
+      const picker = setupMediaPicker(body, slot);
+
+      actions.querySelector('[data-act="dl"]').addEventListener("click", () => {
+        const rep = getActiveReport();
+        triggerDownload(url, filenameForSlot(rep, no, slot, media.type));
+      });
+      actions.querySelector('[data-act="replace"]').addEventListener("click", () => picker.open());
+      actions.querySelector('[data-act="remove"]').addEventListener("click", () => handleRemoveMedia(slot));
+
+      body.appendChild(buildDriveStatusRow(slot));
+    }
+
+    // Sumber = fallback Google Drive (file lokal tidak ada di perangkat ini,
+    // biasanya karena hasil import JSON dari perangkat lain).
+    function renderDriveSlotBody(body, slot, media) {
+      appendSourceBadge(body, "Drive", "drive");
+
+      if (slot.kind === "photo" && media.previewUrl) {
+        const loadingNote = document.createElement("p");
+        loadingNote.className = "doc-slot__empty-text";
+        loadingNote.textContent = "Memuat foto dari Drive...";
+        body.appendChild(loadingNote);
+
+        const img = document.createElement("img");
+        img.className = "doc-slot__preview";
+        img.style.display = "none";
+        img.alt = slot.label;
+        img.addEventListener("load", () => {
+          if (destroyed) return;
+          loadingNote.remove();
+          img.style.display = "block";
+        });
+        img.addEventListener("error", () => {
+          // Preview Drive tidak bisa diakses (mis. permission file belum
+          // dibagikan) — jangan sampai merusak UI, tampilkan fallback yang
+          // jelas + tombol "Buka di Drive" saja.
+          if (destroyed) return;
+          img.remove();
+          loadingNote.remove();
+          appendDriveFallbackNote(body, media, "Foto tersimpan di Drive, tapi preview tidak tersedia.");
+        });
+        img.addEventListener("click", () => {
+          if (img.style.display !== "none") openLightbox("img", media.previewUrl);
+        });
+        body.appendChild(img);
+        img.src = media.previewUrl; // set terakhir supaya listener sudah terpasang
+      } else if (slot.kind === "video") {
+        // Video Drive sengaja tidak dipaksakan jadi <video src> (URL Drive
+        // biasa bukan direct video URL yang kompatibel) — cukup tombol buka.
+        appendDriveFallbackNote(body, media, "Video tersedia di Google Drive.");
+      } else {
+        appendDriveFallbackNote(body, media, "Dokumentasi tersimpan di Drive.");
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "doc-slot__file-actions";
+      actions.innerHTML = '<button class="btn btn--ghost btn--sm" data-act="replace">' + iconSpan("swap") + ' Ambil Baru</button>';
+      body.appendChild(actions);
+      const picker = setupMediaPicker(body, slot);
+      actions.querySelector('[data-act="replace"]').addEventListener("click", () => picker.open());
+    }
+
+    // Sumber = tidak ada di manapun (bukan lagi diasumsikan hilang dari
+    // perangkat ini saja — sudah dicek IndexedDB DAN Drive).
+    function renderMissingSlotBody(body, slot) {
+      const wrap = document.createElement("div");
+      wrap.className = "doc-slot__empty";
+      const text = document.createElement("p");
+      text.className = "doc-slot__empty-text";
+      text.textContent = "Dokumentasi tidak tersedia.";
+      wrap.appendChild(text);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn--action btn--sm";
+      btn.innerHTML = (slot.kind === "photo" ? iconSpan("camera") : iconSpan("video")) + " Tambah";
+      wrap.appendChild(btn);
+      body.appendChild(wrap);
+      const picker = setupMediaPicker(wrap, slot);
+      btn.addEventListener("click", () => picker.open());
     }
 
     async function buildDocSlotEl(slot) {
@@ -1353,51 +1738,23 @@
         body.appendChild(placeholder);
         slotEl.appendChild(body);
 
-        getMediaFile(reportId, no, slot.key).then((record) => {
+        // Setiap slot berdiri sendiri: kalau slot ini gagal (mis. error
+        // jaringan saat resolve sumber), slot lain tetap render normal.
+        getMediaSource(reportId, no, slot).then((media) => {
           if (destroyed) return;
           body.innerHTML = "";
-          if (record && record.blob) {
-            const url = trackUrl(cacheKey, URL.createObjectURL(record.blob));
-            let mediaEl;
-            if (slot.kind === "photo") {
-              mediaEl = document.createElement("img");
-              mediaEl.className = "doc-slot__preview";
-              mediaEl.src = url;
-              mediaEl.alt = slot.label;
-              mediaEl.addEventListener("click", () => openLightbox("img", url));
-            } else {
-              mediaEl = document.createElement("video");
-              mediaEl.className = "doc-slot__preview";
-              mediaEl.src = url;
-              mediaEl.controls = true;
-              mediaEl.playsInline = true;
-            }
-            body.appendChild(mediaEl);
-
-            const actions = document.createElement("div");
-            actions.className = "doc-slot__file-actions";
-            actions.innerHTML =
-              '<button class="btn btn--ghost btn--sm" data-act="dl">' + iconSpan("download") + ' Unduh</button>' +
-              '<button class="btn btn--ghost btn--sm" data-act="replace">' + iconSpan("swap") + ' Ganti</button>' +
-              '<button class="btn btn--danger btn--sm" data-act="remove">' + iconSpan("trash") + ' Hapus</button>';
-            body.appendChild(actions);
-
-            const picker = setupMediaPicker(body, slot);
-
-            actions.querySelector('[data-act="dl"]').addEventListener("click", () => {
-              const rep = getActiveReport();
-              triggerDownload(url, filenameForSlot(rep, no, slot, record.type));
-            });
-            actions.querySelector('[data-act="replace"]').addEventListener("click", () => picker.open());
-            actions.querySelector('[data-act="remove"]').addEventListener("click", () => handleRemoveMedia(slot));
-
-            body.appendChild(buildDriveStatusRow(slot));
+          if (media.source === "local") {
+            renderLocalSlotBody(body, slot, media, cacheKey);
+          } else if (media.source === "drive") {
+            renderDriveSlotBody(body, slot, media);
           } else {
-            const missing = document.createElement("p");
-            missing.className = "doc-slot__empty-text";
-            missing.textContent = "File tidak ditemukan di penyimpanan perangkat ini.";
-            body.appendChild(missing);
+            renderMissingSlotBody(body, slot);
           }
+        }).catch((err) => {
+          console.error("Gagal memuat dokumentasi untuk slot " + slot.key, err);
+          if (destroyed) return;
+          body.innerHTML = "";
+          renderMissingSlotBody(body, slot);
         });
       } else {
         const emptyWrap = document.createElement("div");
@@ -1506,7 +1863,7 @@
     if (u.note) { noteWrap.hidden = false; $("#detailLocNote").textContent = u.note; } else { noteWrap.hidden = true; }
 
     $("#detailMapsBtn").href = u.maps;
-    $("#detailCallBtn").href = "tel:" + u.phone.replace(/[^0-9+]/g, "");
+    $("#detailCallBtn").href = waLink(u.phone);
 
     const dt = formatDateTime(e.visitTime);
     $("#detailVisitTime").textContent = dt.time + (dt.date !== "—" ? " · " + dt.date : "");
@@ -1568,7 +1925,7 @@
         '<div class="field-hero__row">Waktu kunjungan: ' + dt.time + '</div>' +
         '<div class="field-hero__actions">' +
           '<a class="btn btn--action" href="' + encodeURI(u.maps) + '" target="_blank" rel="noopener">' + iconSpan("pin") + ' Maps</a>' +
-          '<a class="btn btn--action" href="tel:' + u.phone.replace(/[^0-9+]/g, "") + '">' + iconSpan("phone") + ' Telepon</a>' +
+          '<a class="btn btn--action" href="' + waLink(u.phone) + '" target="_blank" rel="noopener">' + iconSpan("whatsapp") + ' WhatsApp</a>' +
         '</div>' +
       '</div>' +
       '<div id="fieldWorkflow" class="visit-workflow"></div>';
@@ -1816,6 +2173,40 @@
     return parsed;
   }
 
+  // Deep merge yang aman khusus untuk import: memastikan field nested
+  // (doc per slot, drive.folderId/folderUrl, drive.files per slot) tidak
+  // pernah hilang atau tertimpa jadi null hanya karena JSON hasil export
+  // tidak lengkap (mis. hasil export versi lama sebelum fitur Drive ada,
+  // atau sebagian slot belum pernah diupload saat export dilakukan).
+  function mergeImportedEntry(incoming) {
+    const merged = defaultEntryState();
+    if (!incoming || typeof incoming !== "object") return merged;
+
+    ["status", "notes", "visitTime", "completedAt"].forEach((k) => {
+      if (typeof incoming[k] !== "undefined") merged[k] = incoming[k];
+    });
+
+    // doc: merge per-slot — slot yang tidak ada di JSON tetap default (false).
+    merged.doc = Object.assign({}, merged.doc, incoming.doc || {});
+
+    // drive: merge nested per-slot supaya fileId/fileUrl satu slot tidak
+    // pernah hilang hanya karena field lain pada slot yang sama tidak ada
+    // di JSON, atau karena slot lain di drive.files tidak lengkap.
+    const incomingDrive = incoming.drive || {};
+    if (typeof incomingDrive.folderId !== "undefined") merged.drive.folderId = incomingDrive.folderId;
+    if (typeof incomingDrive.folderUrl !== "undefined") merged.drive.folderUrl = incomingDrive.folderUrl;
+    const incomingFiles = incomingDrive.files || {};
+    DOC_SLOTS.forEach((s) => {
+      const inc = incomingFiles[s.key];
+      if (inc && typeof inc === "object") {
+        merged.drive.files[s.key] = Object.assign({}, merged.drive.files[s.key], inc);
+      }
+    });
+
+    ensureDriveShape(merged); // jaga-jaga untuk field yang masih kurang
+    return merged;
+  }
+
   function handleImportFile(file) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -1826,9 +2217,7 @@
         const rep = getActiveReport();
         UMKM_DATA.forEach((u) => {
           if (incoming[u.no]) {
-            const merged = Object.assign(defaultEntryState(), incoming[u.no]);
-            merged.doc = Object.assign({ front: false, right: false, left: false, alfamartVideo: false }, incoming[u.no].doc || {});
-            rep.entries[u.no] = merged;
+            rep.entries[u.no] = mergeImportedEntry(incoming[u.no]);
           }
         });
         touchActiveReport();

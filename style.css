@@ -547,6 +547,20 @@ video.doc-slot__preview { cursor: default; }
 .drive-status--skipped { color: var(--amber); }
 .drive-status--unconfigured { color: var(--text-faint); }
 
+/* ---- Badge sumber media (Lokal / Drive) & fallback preview Drive ---- */
+.doc-slot__source-row { display: flex; padding: 6px 8px 0; }
+.doc-slot__source-badge {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  padding: 2px 7px; border-radius: var(--r-pill); background: var(--elevated); color: var(--text-faint);
+}
+.doc-slot__source-badge--local { color: var(--text-dim); }
+.doc-slot__source-badge--drive { color: var(--blue); }
+.doc-slot__drive-fallback {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px 10px; text-align: center;
+}
+.doc-slot__drive-fallback .btn { font-size: 10.5px; padding: 6px 10px; }
+
 .drive-folder-link { display: inline-flex; align-items: center; gap: 4px; margin-bottom: var(--sp-3); }
 .drive-folder-link[hidden] { display: none; }
 .drive-folder-link [data-icon] { width: 14px; height: 14px; }
